@@ -1,0 +1,6 @@
+@ocr_HostAddress = http://localhost:5064
+
+GET {{ocr_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
