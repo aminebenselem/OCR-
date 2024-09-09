@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using ocr.Models;
+using ocr.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<FormOptions>(o =>
@@ -10,17 +11,25 @@ builder.Services.Configure<FormOptions>(o =>
     o.MultipartBodyLengthLimit = int.MaxValue;
     o.MemoryBufferThreshold = int.MaxValue;
 });
-// Add services to the container.
 builder.Services.AddDbContext<FilesContext>(options =>
                     options.UseSqlServer(builder.Configuration.GetConnectionString("FilesContext")));
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpClient<VllmService>();
 
-var app = builder.Build();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowSpecificOrigin",
+        builder => builder
+            .WithOrigins("*")
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
+var app = builder.Build(); 
 
-// Configure the HTTP request pipeline.
+app.UseCors("AllowSpecificOrigin");
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

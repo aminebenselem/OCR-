@@ -147,3 +147,6 @@ C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\Patagames.Ocr.dll
 C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\PdfiumViewer.dll
 C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\nl\PdfiumViewer.resources.dll
 C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\x64\pdfium.dll
+C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\System.Web.Cors.dll
+C:\Users\amine\OneDrive\Bureau\ocr\ocr\obj\Debug\net8.0\ocr.sourcelink.json
+C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\Newtonsoft.Json.dll

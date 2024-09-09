@@ -10,21 +10,25 @@ using Patagames.Ocr.Enums;
 using System.Drawing.Imaging;
 using System.Text;
 using PdfiumViewer;
+using ocr.Services;
+using static System.Net.Mime.MediaTypeNames;
+using System.Drawing;
 
 namespace ocr.Controllers
-
 {
     [Route("api/[controller]")]
     [ApiController]
     public class FilesController : ControllerBase
-
-    { 
+    {
         private readonly FilesContext _filesContext;
-        public FilesController(FilesContext filesContext)
+        private readonly VllmService _vllmService;
+
+        public FilesController(FilesContext filesContext, VllmService vllmService)
         {
             _filesContext = filesContext;
+            _vllmService = vllmService;
         }
-        // Get : api/Files
+
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Files>>> GetFiles()
         {
@@ -34,7 +38,6 @@ namespace ocr.Controllers
             }
             return await _filesContext.Files.ToListAsync();
         }
-        // Get : api/Files/2
 
         [HttpGet("{id}")]
         public async Task<ActionResult<Files>> GetFileById(int id)
@@ -50,7 +53,7 @@ namespace ocr.Controllers
             }
             return file;
         }
-        // Post : api/files
+
         [HttpPost]
         public async Task<ActionResult<Files>> PostFiles(Files file)
         {
@@ -91,16 +94,13 @@ namespace ocr.Controllers
                         await file.CopyToAsync(stream);
                     }
 
-                    // Determine file type by extension
                     var fileExtension = Path.GetExtension(fileName).ToLower();
                     if (fileExtension == ".pdf")
                     {
-                        // Process PDF: Convert each page to an image and extract text
                         text = ExtractTextFromPdf(fullPath);
                     }
                     else if (fileExtension == ".jpg" || fileExtension == ".jpeg" || fileExtension == ".png" || fileExtension == ".bmp" || fileExtension == ".tiff")
                     {
-                        // Process Image: Extract text directly from image
                         text = ExtractTextFromImage(fullPath);
                     }
                     else
@@ -108,7 +108,6 @@ namespace ocr.Controllers
                         return BadRequest("Unsupported file type.");
                     }
 
-                    // Index the extracted text into Elasticsearch
                     var document = new Files
                     {
                         id = 1,
@@ -116,7 +115,7 @@ namespace ocr.Controllers
                         text = text,
                         fileuri = "not yet"
                     };
-                    var indexResponse = await client.IndexAsync(document, (IndexName) "z");
+                    var indexResponse = await client.IndexAsync(document, (IndexName)"z");
 
                     if (indexResponse.IsValidResponse)
                     {
@@ -134,7 +133,6 @@ namespace ocr.Controllers
             }
             catch (Exception ex)
             {
-                // Log the exception here for security purposes, instead of exposing it directly
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
@@ -145,43 +143,110 @@ namespace ocr.Controllers
             {
                 string tessdataPath = @"C:\Users\amine\OneDrive\Bureau\ocr\ocr\bin\Debug\net8.0\tessdata";
                 api.Init(Languages.English, tessdataPath);
-                return api.GetTextFromImage(imagePath);
+
+                var resizedImagePath = ResizeImageToAllowedWidth(imagePath);
+                return api.GetTextFromImage(resizedImagePath);
             }
+        }
+
+        private string ResizeImageToAllowedWidth(string imagePath)
+        {
+            using (var image = System.Drawing.Image.FromFile(imagePath))
+            {
+                int allowedWidth = CalculateAllowedWidth(image.Width);
+                int newHeight = (int)((double)allowedWidth / image.Width * image.Height);
+
+                using (var resizedImage = new Bitmap(image, new Size(allowedWidth, newHeight)))
+                {
+                    string resizedImagePath = Path.Combine(Path.GetDirectoryName(imagePath), "resized_" + Path.GetFileName(imagePath));
+                    resizedImage.Save(resizedImagePath, image.RawFormat);
+                    return resizedImagePath;
+                }
+            }
+        }
+
+        private int CalculateAllowedWidth(int originalWidth)
+        {
+            if (originalWidth < 500) return originalWidth;
+            return (originalWidth / 100) * 100 + 25;
         }
 
         private string ExtractTextFromPdf(string pdfPath)
         {
             var text = new StringBuilder();
 
-            // Use PdfiumViewer to open and render the PDF
-            using (var pdfDocument = PdfiumViewer.PdfDocument.Load(pdfPath))
+            try
             {
-                for (int i = 0; i < pdfDocument.PageCount; i++)
+                using (var pdfDocument = PdfiumViewer.PdfDocument.Load(pdfPath))
                 {
-                    // Render each page to an image
-                    using (var img = pdfDocument.Render(i, 500, 550, PdfRenderFlags.CorrectFromDpi))
+                    for (int i = 0; i < pdfDocument.PageCount; i++)
                     {
-                        // Save the rendered image to a temporary file
-                        var pageImagePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.png");
-                        img.Save(pageImagePath, ImageFormat.Png);
-
-                        // Extract text from the image
-                        text.Append(ExtractTextFromImage(pageImagePath));
-
-                        // Clean up the temporary file
-                        System.IO.File.Delete(pageImagePath);
+                        try
+                        {
+                            var pageText = pdfDocument.GetPdfText(i);
+                            if (!string.IsNullOrEmpty(pageText))
+                            {
+                                text.AppendLine(pageText);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error processing page {i}: {ex.Message}");
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading PDF: {ex.Message}");
             }
 
             return text.ToString();
         }
-        
 
+        [HttpPost("generate")]
+        public async Task<IActionResult> Generate(string prompt)
+        {
+            if (string.IsNullOrEmpty(prompt))
+            {
+                return BadRequest("Prompt cannot be empty");
+            }
 
+            var settings = new ElasticsearchClientSettings(new Uri("https://localhost:9200"))
+                .CertificateFingerprint("0f11565f265ab92bfaf8b71667d13474274dd57c773498566a393e8ee3ada79c")
+                .Authentication(new BasicAuthentication("elastic", "aVpEqMQ92W9h6ggk+Vgg"));
 
+            var client = new ElasticsearchClient(settings);
 
+            var searchResponse = await client.SearchAsync<Files>(s => s
+                .Index("z")
+                .Query(q => q
+                    .Match(m => m
+                        .Field(f => f.text)
+                        .Query(prompt)
+                    )
+                )
+                .Size(1)
+            );
 
+            var document = searchResponse.Documents.FirstOrDefault();
+            if (document == null)
+            {
+                return NotFound("No related text found in Elasticsearch.");
+            }
 
+            var relatedText = document.text;
+            var newPrompt = $"Using this text from Elasticsearch: {relatedText}, answer this question: {prompt}";
+
+            try
+            {
+                string result = await _vllmService.GetApiResponseAsync(newPrompt, 2000);
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "An error occurred while processing your request", details = ex.Message });
+            }
+        }
     }
 }
